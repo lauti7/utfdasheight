@@ -1,4 +1,4 @@
-pub fn utf8_encode(codepoint: i32) -> Vec<u8> {
+pub fn utf8_encode(codepoint: u32) -> Vec<u8> {
     let one_byte_range = 0x0..=0x7f;
     let two_bytes_range = 0x80..=0x7ff;
     let three_bytes_range = 0x800..=0xffff;
@@ -66,9 +66,117 @@ pub fn utf8_encode(codepoint: i32) -> Vec<u8> {
     vec![]
 }
 
+pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
+    let determine_octets_n_mask = 0b1111_0000_u32;
+    let mut output = Vec::new();
+    let mut curr_output = 0b0000_0000_u32;
+    let mut curr_n_octets = 0;
+    let mut i = 0;
+    while i < s.len() {
+        let is_cont_octet_mask = 0b1000_0000_u8;
+        if curr_n_octets > 0 && s[i] >= is_cont_octet_mask {
+            let shift = match curr_n_octets {
+                1 => 0,
+                2 => 6,
+                3 => 12,
+                _ => panic!("shift overflow"),
+            } as u32;
+            let val = (s[i] as u32 & 0b0011_1111_u32) << shift;
+            let octet = val | curr_output;
+            curr_output = octet;
+            if curr_n_octets == 1 {
+                output.push(octet);
+            }
+            curr_n_octets -= 1;
+            i += 1;
+            continue;
+        }
+
+        let n_octets = s[i] as u32 & determine_octets_n_mask;
+        if n_octets <= 0x7f {
+            output.push(n_octets);
+            i += 1;
+            continue;
+        }
+
+        // 0xC0 == 0b1100_0000
+        if n_octets == 0xC0 {
+            let octet = (s[i] << 6) as u32 | curr_output;
+            curr_output = octet;
+            curr_n_octets = 1;
+            i += 1;
+            continue;
+        }
+
+        // 0xEO == 0b1110_0000
+        if n_octets == 0xE0 {
+            let val = (s[i] & 0b0001_1111) as u32;
+            let octet = (val | curr_output) << 12;
+            println!("leading octet: {octet:b}");
+            curr_output = octet;
+            curr_n_octets = 2;
+            i += 1;
+            continue;
+        }
+
+        // 0xEO == 0b1111_0000
+        if n_octets == 0xF0 {
+            let val = (s[i] & 0b0000_1111) as u32;
+            let octet = (val << 18) | curr_output;
+            curr_output = octet;
+            curr_n_octets = 3;
+            i += 1;
+            continue;
+        }
+    }
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a() {
+        let v = vec![
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, // 00..1f
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, // 20..3f
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, // 40..5f
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, // 60..7f
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+            9, 9, 9, // 80..9f
+            7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+            7, 7, 7, // a0..bf
+            8, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, // c0..df
+            0xa, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x4, 0x3,
+            0x3, // e0..ef
+            0xb, 0x6, 0x6, 0x6, 0x5, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8,
+            0x8, // f0..ff
+            0x0, 0x1, 0x2, 0x3, 0x5, 0x8, 0x7, 0x1, 0x1, 0x1, 0x4, 0x6, 0x1, 0x1, 0x1,
+            0x1, // s0..s0
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1,
+            1, 1, 1, // s1..s2
+            1, 2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1,
+            1, 1, 1, // s3..s4
+            1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1,
+            1, 1, 1, // s5..s6
+            1, 3, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, // s7..s8
+        ];
+        println!("{}", v.len())
+    }
+
+    #[test]
+    fn utf8_encode_ascii() {
+        let res = utf8_encode(0x41);
+        assert_eq!(res[0], 0b01000001);
+    }
 
     #[test]
     fn utf8_encode_two_bytes_range_test() {
@@ -98,5 +206,12 @@ mod tests {
     fn utf8_encode_no_range() {
         let res = utf8_encode(0x11ffff);
         assert!(res.is_empty())
+    }
+
+    #[test]
+    fn utf8_decode_four_bytes_test() {
+        let res = utf8_encode(0x10001);
+        let out = utf8_decode(res);
+        assert_eq!(out[0], 0b10000000000000001);
     }
 }
