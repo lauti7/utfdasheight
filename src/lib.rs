@@ -100,8 +100,7 @@ pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
             continue;
         }
 
-        // 0xC0 == 0b1100_0000
-        if n_octets == 0xC0 {
+        if n_octets == 0b1100_0000 {
             let octet = (s[i] << 6) as u32 | curr_output;
             curr_output = octet;
             curr_n_octets = 1;
@@ -109,8 +108,7 @@ pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
             continue;
         }
 
-        // 0xEO == 0b1110_0000
-        if n_octets == 0xE0 {
+        if n_octets == 0b1110_0000 {
             let val = (s[i] & 0b0001_1111) as u32;
             let octet = (val | curr_output) << 12;
             println!("leading octet: {octet:b}");
@@ -120,8 +118,7 @@ pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
             continue;
         }
 
-        // 0xEO == 0b1111_0000
-        if n_octets == 0xF0 {
+        if n_octets == 0b1111_0000 {
             let val = (s[i] & 0b0000_1111) as u32;
             let octet = (val << 18) | curr_output;
             curr_output = octet;
