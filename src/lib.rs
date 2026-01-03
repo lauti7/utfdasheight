@@ -111,7 +111,6 @@ pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
         if n_octets == 0b1110_0000 {
             let val = (s[i] & 0b0001_1111) as u32;
             let octet = (val | curr_output) << 12;
-            println!("leading octet: {octet:b}");
             curr_output = octet;
             curr_n_octets = 2;
             i += 1;
