@@ -184,4 +184,16 @@ mod tests {
         let out = utf8_decode(res);
         assert_eq!(out[0], 0b01000001);
     }
+
+    #[test]
+    fn roundtrip_and_into_string() {
+        let unicode_codepoints = Vec::<u32>::from(&[0x68, 0x65, 0x6c, 0x6c, 0x6f]);
+        let encoded_utf8 = unicode_codepoints
+            .into_iter()
+            .flat_map(utf8_encode)
+            .collect::<Vec<u8>>();
+
+        let hello = String::from_utf8(encoded_utf8).unwrap();
+        assert_eq!(hello, "hello");
+    }
 }
