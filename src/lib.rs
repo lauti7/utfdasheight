@@ -9,7 +9,8 @@ const FOUR_OCTETS_RANGE: std::ops::RangeInclusive<u32> = 0x10000..=0x10ffff;
 const REPLACEMENT_CHAR_0X: u32 = 0xFFFD;
 const REPLACEMENT_CHAR_OCTETS: [u8; 3] = [0b11101111, 0b10111111, 0b10111101]; // 0xFFFD
 
-pub fn utf8_encode(codepoint: u32) -> Vec<u8> {
+/// "lossy" because it doens't fail when an invalid codepoint is passed in. It returns 0xFFFD
+pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
     if PROHIBITED_RANGE.contains(&codepoint) {
         return REPLACEMENT_CHAR_OCTETS.to_vec();
     }
@@ -71,7 +72,8 @@ pub fn utf8_encode(codepoint: u32) -> Vec<u8> {
     REPLACEMENT_CHAR_OCTETS.to_vec()
 }
 
-pub fn utf8_decode(s: Vec<u8>) -> Vec<u32> {
+/// "lossy" because it doens't fail when an invalid sequence is passed in. It returns 0xFFFD
+pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
     let determine_n_octets_mask = 0b1111_0000_u32;
     let mut output = Vec::new();
     let mut curr_output = 0b0000_0000_u32;
@@ -175,20 +177,20 @@ mod tests {
 
     #[test]
     fn utf8_encode_ascii() {
-        let res = utf8_encode(0x41);
+        let res = utf8_encode_lossy(0x41);
         assert_eq!(res[0], 0b01000001);
     }
 
     #[test]
     fn utf8_encode_two_octets_range_test() {
-        let res = utf8_encode(0xA1);
+        let res = utf8_encode_lossy(0xA1);
         assert_eq!(res[0], 0b11000010_u8);
         assert_eq!(res[1], 0b10100001_u8);
     }
 
     #[test]
     fn utf8_encode_three_octets_range_test() {
-        let res = utf8_encode(0x0801);
+        let res = utf8_encode_lossy(0x0801);
         assert_eq!(res[0], 0b11100000_u8);
         assert_eq!(res[1], 0b10100000_u8);
         assert_eq!(res[2], 0b10000001_u8);
@@ -196,7 +198,7 @@ mod tests {
 
     #[test]
     fn utf8_encode_four_octets_range_test() {
-        let res = utf8_encode(0x10001);
+        let res = utf8_encode_lossy(0x10001);
         assert_eq!(res[0], 0b11110000_u8);
         assert_eq!(res[1], 0b10010000_u8);
         assert_eq!(res[2], 0b10000000_u8);
@@ -205,36 +207,36 @@ mod tests {
 
     #[test]
     fn utf8_encode_no_range() {
-        let res = utf8_encode(0x11ffff);
+        let res = utf8_encode_lossy(0x11ffff);
         assert_eq!(res, REPLACEMENT_CHAR_OCTETS)
     }
 
     #[test]
     fn utf8_decode_ascii_test() {
-        let res = utf8_encode(0x41);
+        let res = utf8_encode_lossy(0x41);
         assert!(res.is_ascii());
-        let out = utf8_decode(res);
+        let out = utf8_decode_lossy(res);
         assert_eq!(out[0], 0b01000001);
     }
 
     #[test]
     fn utf8_decode_two_octets_test() {
-        let res = utf8_encode(0xA1);
-        let out = utf8_decode(res);
+        let res = utf8_encode_lossy(0xA1);
+        let out = utf8_decode_lossy(res);
         assert_eq!(out[0], 0b10100001);
     }
 
     #[test]
     fn utf8_decode_three_octets_test() {
-        let res = utf8_encode(0x0801);
-        let out = utf8_decode(res);
+        let res = utf8_encode_lossy(0x0801);
+        let out = utf8_decode_lossy(res);
         assert_eq!(out[0], 0b100000000001);
     }
 
     #[test]
     fn utf8_decode_four_octets_test() {
-        let res = utf8_encode(0x10001);
-        let out = utf8_decode(res);
+        let res = utf8_encode_lossy(0x10001);
+        let out = utf8_decode_lossy(res);
         assert_eq!(out[0], 0b10000000000000001);
     }
 
@@ -243,7 +245,7 @@ mod tests {
         let unicode_codepoints = Vec::<u32>::from(&[0x68, 0x65, 0x6c, 0x6c, 0x6f]);
         let encoded_utf8 = unicode_codepoints
             .into_iter()
-            .flat_map(utf8_encode)
+            .flat_map(utf8_encode_lossy)
             .collect::<Vec<u8>>();
 
         let hello = String::from_utf8(encoded_utf8).unwrap();
@@ -252,26 +254,26 @@ mod tests {
 
     #[test]
     fn invalid_encoding_test() {
-        let encoded = utf8_encode(0xD802);
+        let encoded = utf8_encode_lossy(0xD802);
         assert_eq!(encoded, REPLACEMENT_CHAR_OCTETS);
 
-        let encoded = utf8_encode(0x11ffff);
+        let encoded = utf8_encode_lossy(0x11ffff);
         assert_eq!(encoded, REPLACEMENT_CHAR_OCTETS);
     }
 
     #[test]
     fn invalid_sequences_decoding_test() {
-        let decoded = utf8_decode(vec![0b11101101, 0b10100000, 0b10000000]); // 0xED 0xA0 0x80
+        let decoded = utf8_decode_lossy(vec![0b11101101, 0b10100000, 0b10000000]); // 0xED 0xA0 0x80
 
         assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
 
-        let decoded = utf8_decode(vec![
+        let decoded = utf8_decode_lossy(vec![
             0b11101101, 0b10100001, 0b10001100, 0b11101101, 0b10111110, 0b10110100,
         ]); // 0xED 0xA1 0x8C 0xED 0xBE 0xB4
 
         assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
 
-        let decoded = utf8_decode(vec![0b11000000, 0b10000000]); // 0xC0 0x8
+        let decoded = utf8_decode_lossy(vec![0b11000000, 0b10000000]); // 0xC0 0x8
 
         assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
     }
