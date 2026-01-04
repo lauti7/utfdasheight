@@ -74,7 +74,7 @@ pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
 
 /// "lossy" because it doens't fail when an invalid sequence is passed in. It returns 0xFFFD
 pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
-    let determine_n_octets_mask = 0b1111_0000_u32;
+    let determine_n_octets_mask = 0b1111_0000_u8;
     let mut output = Vec::new();
     let mut curr_output = 0b0000_0000_u32;
     let mut total_n_octets = 0;
@@ -128,7 +128,7 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
             continue;
         }
 
-        let n_octets = s[i] as u32 & determine_n_octets_mask;
+        let n_octets = s[i] & determine_n_octets_mask;
 
         match n_octets {
             0b1100_0000 => {
@@ -136,8 +136,6 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
                 curr_output = octet;
                 continuing_octet = 1;
                 total_n_octets = 2;
-                i += 1;
-                continue;
             }
             0b1110_0000 => {
                 let val = (s[i] & 0b0001_1111) as u32;
@@ -145,8 +143,6 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
                 curr_output = octet;
                 continuing_octet = 2;
                 total_n_octets = 3;
-                i += 1;
-                continue;
             }
             0b1111_0000 => {
                 let val = (s[i] & 0b0000_1111) as u32;
@@ -154,18 +150,27 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
                 curr_output = octet;
                 continuing_octet = 3;
                 total_n_octets = 4;
-                i += 1;
-                continue;
             }
             val => {
                 if val <= 0x7f {
                     let octet = s[i] as u32 & 0b0111_1111_u32;
                     output.push(octet);
+                } else {
+                    output.push(REPLACEMENT_CHAR_0X);
                 }
-                i += 1;
-                continue;
             }
         }
+
+        // if the total n octets to parse as continuation bytes is larger than the rest of array
+        // is an invalid sequence
+        if total_n_octets > (s.len() - (i + 1)) {
+            output.push(REPLACEMENT_CHAR_0X);
+            i += continuing_octet + 1;
+            continue;
+        }
+
+        i += 1;
+        continue;
     }
 
     output
@@ -275,6 +280,12 @@ mod tests {
 
         let decoded = utf8_decode_lossy(vec![0b11000000, 0b10000000]); // 0xC0 0x8
 
+        assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
+
+        let decoded = utf8_decode_lossy(vec![0b1111_1111]);
+        assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
+
+        let decoded = utf8_decode_lossy(vec![0b1000_0001]);
         assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
     }
 }
