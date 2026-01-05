@@ -9,7 +9,7 @@ const FOUR_OCTETS_RANGE: std::ops::RangeInclusive<u32> = 0x10000..=0x10ffff;
 const REPLACEMENT_CHAR_0X: u32 = 0xFFFD;
 const REPLACEMENT_CHAR_OCTETS: [u8; 3] = [0b11101111, 0b10111111, 0b10111101]; // 0xFFFD
 
-/// "lossy" because it doens't fail when an invalid codepoint is passed in. It returns 0xFFFD
+/// "lossy" because it doesn't fail when an invalid codepoint is passed in. It returns 0xFFFD
 pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
     if PROHIBITED_RANGE.contains(&codepoint) {
         return REPLACEMENT_CHAR_OCTETS.to_vec();
@@ -29,7 +29,7 @@ pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
         let leading_octet = 0b1100_0000_u8;
         let leading_mask = !leading_octet;
         // we do a right shift 6 bits because these bits are the ones used on the continuation octet (0b10xx_xxxx_u8)
-        let leading_result = leading_octet | (leading_mask & (codepoint as u8 >> 6));
+        let leading_result = leading_octet | (leading_mask & (codepoint >> 6) as u8);
 
         return vec![leading_result, continuation_result];
     }
@@ -52,7 +52,7 @@ pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
 
     if FOUR_OCTETS_RANGE.contains(&codepoint) {
         let last_continuation_octet = continuation_octet | (continuation_mask & codepoint as u8);
-        let second_continuation_octect =
+        let second_continuation_octet =
             continuation_octet | (continuation_mask & (codepoint >> 6) as u8);
         let first_continuation_octet =
             continuation_octet | (continuation_mask & (codepoint >> 12) as u8);
@@ -64,7 +64,7 @@ pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
         return vec![
             leading_result,
             first_continuation_octet,
-            second_continuation_octect,
+            second_continuation_octet,
             last_continuation_octet,
         ];
     }
@@ -72,7 +72,7 @@ pub fn utf8_encode_lossy(codepoint: u32) -> Vec<u8> {
     REPLACEMENT_CHAR_OCTETS.to_vec()
 }
 
-/// "lossy" because it doens't fail when an invalid sequence is passed in. It returns 0xFFFD
+/// "lossy" because it doesn't fail when an invalid sequence is passed in. It returns 0xFFFD
 pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
     let determine_n_octets_mask = 0b1111_0000_u8;
     let mut output = Vec::new();
@@ -83,6 +83,15 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
 
     while i < s.len() {
         if continuing_octet > 0 {
+            // check if it's a continuation byte
+            if (s[i] & 0b1100_0000) != 0b1000_0000 {
+                output.push(REPLACEMENT_CHAR_0X);
+                continuing_octet = 0;
+                total_n_octets = 0;
+                i += 1;
+                continue;
+            }
+
             let shift = match continuing_octet {
                 1 => 0,
                 2 => 6,
@@ -109,9 +118,9 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
             }
 
             let range = match total_n_octets {
-                2 => TWO_OCTETS_RANGE.clone(),
-                3 => THREE_OCTETS_RANGE.clone(),
-                4 => FOUR_OCTETS_RANGE.clone(),
+                2 => TWO_OCTETS_RANGE,
+                3 => THREE_OCTETS_RANGE,
+                4 => FOUR_OCTETS_RANGE,
                 _ => panic!("unsopported total octets"),
             };
 
@@ -132,7 +141,8 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
 
         match n_octets {
             0b1100_0000 => {
-                let octet = (s[i] << 6) as u32 | curr_output;
+                let val = (s[i] & 0b0011_1111) as u32;
+                let octet = (val << 6) | curr_output;
                 curr_output = octet;
                 continuing_octet = 1;
                 total_n_octets = 2;
@@ -161,16 +171,13 @@ pub fn utf8_decode_lossy(s: Vec<u8>) -> Vec<u32> {
             }
         }
 
-        // if the total n octets to parse as continuation bytes is larger than the rest of array
-        // is an invalid sequence
-        if total_n_octets > (s.len() - (i + 1)) {
-            output.push(REPLACEMENT_CHAR_0X);
-            i += continuing_octet + 1;
-            continue;
-        }
-
         i += 1;
         continue;
+    }
+
+    // if continuing octet > 0, it means malformed/invalid sequence
+    if continuing_octet > 0 {
+        output.push(REPLACEMENT_CHAR_0X);
     }
 
     output
@@ -191,6 +198,14 @@ mod tests {
         let res = utf8_encode_lossy(0xA1);
         assert_eq!(res[0], 0b11000010_u8);
         assert_eq!(res[1], 0b10100001_u8);
+
+        let res = utf8_encode_lossy(0x100);
+
+        assert_eq!(res[0], 0b11000100);
+        assert_eq!(res[1], 0b10000000);
+
+        let res = utf8_decode_lossy(vec![0b1100_0100, 0b1000_0000]);
+        assert_eq!(res[0], 0x100);
     }
 
     #[test]
@@ -287,5 +302,144 @@ mod tests {
 
         let decoded = utf8_decode_lossy(vec![0b1000_0001]);
         assert_eq!(decoded[0], REPLACEMENT_CHAR_0X);
+    }
+
+    #[test]
+    fn malformed_continuation_bytes_test() {
+        // Continuation byte with wrong prefix (0x40 is 01000000, should be 10xxxxxx)
+        let input = vec![0b11000010, 0b01000000]; // 2-octet sequence with invalid continuation
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 3-octet with one invalid continuation
+        let input = vec![0b11100000, 0b10100000, 0b01000000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+    }
+
+    #[test]
+    fn incomplete_sequences_at_eof() {
+        let input = vec![0b11000010, 0b1100_0000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 2-octet leading byte only
+        let input = vec![0b11000010];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 3-octet leading byte only
+        let input = vec![0b11100000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 4-octet leading byte only
+        let input = vec![0b11110000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 3-octet with one continuation missing
+        let input = vec![0b11100000, 0b10100000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+    }
+
+    #[test]
+    fn overlong_encodings_comprehensive() {
+        // 2-byte overlong for ASCII (should be 1 byte)
+        let input = vec![0b11000000, 0b10000000]; // Represents U+0000
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // 3-byte overlong for 2-byte range
+        let input = vec![0b11100000, 0b10000000, 0b10000000]; // Overlong for U+0080
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+    }
+
+    #[test]
+    fn lone_continuation_bytes() {
+        // Single continuation byte
+        let input = vec![0b10000000];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+
+        // Multiple lone continuations
+        let input = vec![0b10000001, 0b10000010];
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X, REPLACEMENT_CHAR_0X]);
+    }
+
+    #[test]
+    fn edge_code_points() {
+        // U+0000 (null)
+        let encoded = utf8_encode_lossy(0x0000);
+        assert_eq!(encoded, vec![0x00]);
+        let decoded = utf8_decode_lossy(encoded);
+        assert_eq!(decoded, vec![0x0000]);
+
+        // U+007F (max ASCII)
+        let encoded = utf8_encode_lossy(0x007F);
+        assert_eq!(encoded, vec![0x7F]);
+
+        // U+0080 (min 2-byte)
+        let encoded = utf8_encode_lossy(0x0080);
+        assert_eq!(encoded, vec![0b11000010, 0b10000000]);
+
+        // U+07FF (max 2-byte)
+        let encoded = utf8_encode_lossy(0x07FF);
+        // 11011111 10111111
+        assert_eq!(encoded, vec![0b11011111, 0b10111111]);
+
+        // U+0800 (min 3-byte)
+        let encoded = utf8_encode_lossy(0x0800);
+        assert_eq!(encoded, vec![0b11100000, 0b10100000, 0b10000000]);
+
+        // U+FFFF (max 3-byte)
+        let encoded = utf8_encode_lossy(0xFFFF);
+        assert_eq!(encoded, vec![0b11101111, 0b10111111, 0b10111111]);
+
+        // U+10000 (min 4-byte)
+        let encoded = utf8_encode_lossy(0x10000);
+        assert_eq!(
+            encoded,
+            vec![0b11110000, 0b10010000, 0b10000000, 0b10000000]
+        );
+
+        // U+10FFFF (max valid)
+        let encoded = utf8_encode_lossy(0x10FFFF);
+        assert_eq!(
+            encoded,
+            vec![0b11110100, 0b10001111, 0b10111111, 0b10111111]
+        );
+
+        // Just above max (should replace)
+        let encoded = utf8_encode_lossy(0x110000);
+        assert_eq!(encoded, REPLACEMENT_CHAR_OCTETS);
+    }
+
+    #[test]
+    fn empty_and_minimal_inputs() {
+        let decoded = utf8_decode_lossy(vec![]);
+        assert_eq!(decoded, Vec::<u32>::new());
+
+        let decoded = utf8_decode_lossy(vec![0x41]);
+        assert_eq!(decoded, vec![0x41]);
+
+        let decoded = utf8_decode_lossy(vec![0xFF]);
+        assert_eq!(decoded, vec![REPLACEMENT_CHAR_0X]);
+    }
+
+    #[test]
+    fn mixed_valid_invalid() {
+        // Valid ASCII + invalid continuation
+        let input = vec![0x68, 0b10000000, 0x65]; // 'h' + invalid + 'e'
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![0x68, REPLACEMENT_CHAR_0X, 0x65]);
+
+        // Valid multi-byte + incomplete
+        let input = vec![0b11000010, 0b10100001, 0b11100000]; // Valid 2-byte + incomplete 3-byte
+        let decoded = utf8_decode_lossy(input);
+        assert_eq!(decoded, vec![0xA1, REPLACEMENT_CHAR_0X]);
     }
 }
